@@ -1,65 +1,171 @@
-package repository;
+package service;
 
-import model.Appointment;
-import java.util.*;
+import model.Referral;
+import repository.ReferralRepository;
+import utility.IdGenerator;
+
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Repository class responsible for managing Appointment data persistence.
+ * ReferralManager is a singleton service responsible for managing referrals.
  *
- * This class handles loading appointment records from a CSV file
- * and saving updated appointment data back to the file.
+ * Responsibilities include:
+ *  - Creating new referrals
+ *  - Deleting referrals by ID
+ *  - Retrieving all referrals
+ *  - Delegating CSV persistence to ReferralRepository
+ *  - Simulating external system outputs (emails, EHR logs)
+ *
+ * Only one instance of ReferralManager exists to ensure consistent state.
  */
-public class AppointmentRepository {
+public class ReferralManager {
 
-    /** File path to the appointments CSV file */
-    private final String path;
+    private static ReferralManager instance;
 
-    /** CSV header used when writing appointment data */
-    private static final String HEADER =
-            "appointment_id,patient_id,clinician_id,facility_id,appointment_date,appointment_time," +
-                    "duration_minutes,appointment_type,status,reason_for_visit,notes,created_date,last_modified";
+    private final ReferralRepository repository;
+    private final List<Referral> referrals;
 
     /**
-     * Creates a new AppointmentRepository using the specified file path.
+     * Private constructor to enforce singleton pattern.
      *
-     * @param path path to the CSV file storing appointment records
+     * Loads all existing referrals from the repository into memory.
+     *
+     * @param repository ReferralRepository instance for CSV persistence
      */
-    public AppointmentRepository(String path) {
-        this.path = path;
+    private ReferralManager(ReferralRepository repository) {
+        this.repository = repository;
+        this.referrals = repository.loadAll();
     }
 
     /**
-     * Loads all appointment records from the CSV file.
+     * Returns the single instance of ReferralManager.
      *
-     * @return a list of Appointment objects
+     * @param repository ReferralRepository instance (used only on first call)
+     * @return the singleton ReferralManager instance
      */
-    public List<Appointment> loadAll() {
-        List<Appointment> list = new ArrayList<>();
-
-        for (String[] r : CsvUtil.read(path)) {
-            list.add(new Appointment(
-                    r[0], r[1], r[2], r[3],
-                    r[4], r[5], r[6], r[7],
-                    r[8], r[9], r[10], r[11], r[12]
-            ));
+    public static ReferralManager getInstance(ReferralRepository repository) {
+        if (instance == null) {
+            instance = new ReferralManager(repository);
         }
-        return list;
+        return instance;
     }
 
     /**
-     * Saves all appointment records to the CSV file.
+     * Creates a new referral and persists it.
      *
-     * Existing data in the file will be overwritten.
+     * Generates a unique referral ID, sets creation date, and triggers
+     * system side effects such as email and EHR file generation.
      *
-     * @param appointments list of Appointment objects to be saved
+     * @param patientId               ID of the patient
+     * @param referringClinicianId    ID of the clinician making the referral
+     * @param referredToClinicianId   ID of the clinician being referred to
+     * @param referringFacilityId     ID of the facility making the referral
+     * @param referredToFacilityId    ID of the facility receiving the referral
+     * @param urgencyLevel            Urgency of the referral (e.g., Routine, Urgent)
+     * @param referralReason          Reason for referral
+     * @param clinicalSummary         Clinical summary of the patient
+     * @param appointmentId           Related appointment ID
+     * @return the newly created Referral object
      */
-    public void saveAll(List<Appointment> appointments) {
-        List<String> lines = new ArrayList<>();
-
-        for (Appointment a : appointments) {
-            lines.add(a.toCsv());
+    public Referral createReferral(
+            String patientId,
+            String referringClinicianId,
+            String referredToClinicianId,
+            String referringFacilityId,
+            String referredToFacilityId,
+            String urgencyLevel,
+            String referralReason,
+            String clinicalSummary,
+            String appointmentId
+    ) {
+        List<String> ids = new ArrayList<>();
+        for (Referral r : referrals) {
+            ids.add(r.referralId);
         }
 
-        CsvUtil.write(path, HEADER, lines);
+        // Generate unique referral ID with prefix "R"
+        String newId = IdGenerator.nextId("R", ids);
+        String today = java.time.LocalDate.now().toString();
+
+        Referral referral = new Referral(
+                newId,
+                patientId,
+                referringClinicianId,
+                referredToClinicianId,
+                referringFacilityId,
+                referredToFacilityId,
+                today,
+                urgencyLevel,
+                referralReason,
+                clinicalSummary,
+                "",
+                "Sent",     // Status of referral
+                appointmentId,
+                "",
+                today,      // Created date
+                today       // Last modified date
+        );
+
+        // Add to in-memory list, persist, and generate system files
+        referrals.add(referral);
+        repository.saveAll(referrals);
+        generateReferralFiles(referral);
+        return referral;
+    }
+
+    /**
+     * Deletes a referral by its unique ID.
+     *
+     * @param referralId ID of the referral to delete
+     * @throws IllegalArgumentException if the referral does not exist
+     */
+    public void deleteReferral(String referralId) {
+        boolean removed = referrals.removeIf(r -> r.referralId.equals(referralId));
+        if (!removed) {
+            throw new IllegalArgumentException("Referral ID not found: " + referralId);
+        }
+        repository.saveAll(referrals); // persist changes
+    }
+
+    /**
+     * Returns all referrals currently loaded in memory.
+     *
+     * @return List of Referral objects
+     */
+    public List<Referral> getAllReferrals() {
+        return referrals;
+    }
+
+    /**
+     * Simulates external system outputs for a referral.
+     *
+     * Generates two text files:
+     *  1. Email notification
+     *  2. EHR log
+     *
+     * @param r Referral object for which files are generated
+     */
+    private void generateReferralFiles(Referral r) {
+        try {
+            FileWriter email = new FileWriter("referral_email_" + r.referralId + ".txt");
+            email.write("Referral ID: " + r.referralId + "\n");
+            email.write("Patient ID: " + r.patientId + "\n");
+            email.write("Urgency: " + r.urgencyLevel + "\n");
+            email.write("Reason: " + r.referralReason + "\n");
+            email.write("Clinical Summary:\n" + r.clinicalSummary + "\n");
+            email.close();
+
+            FileWriter ehr = new FileWriter("referral_ehr_" + r.referralId + ".txt");
+            ehr.write("Referral recorded in EHR\n");
+            ehr.write("Referral ID: " + r.referralId + "\n");
+            ehr.write("Status: " + r.status + "\n");
+            ehr.close();
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 }
