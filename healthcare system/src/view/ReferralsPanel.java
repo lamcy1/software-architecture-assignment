@@ -112,7 +112,7 @@ public class ReferralsPanel extends JPanel {
     /**
      * Prompts the user to enter a referral ID and deletes
      * the corresponding referral via the controller.
-     
+
      * Displays a confirmation dialog if deletion succeeds,
      * or an error dialog if the referral does not exist or fails to delete.
      * Refreshes the displayed list after deletion.

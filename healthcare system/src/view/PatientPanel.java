@@ -106,7 +106,6 @@ public class PatientPanel extends JPanel {
     /**
      * Prompts the user to enter a patient ID and deletes
      * the corresponding patient via the controller.
-     *
      * Displays a confirmation dialog if deletion succeeds,
      * or a "not found" message if the patient does not exist.
      * Refreshes the displayed list after deletion.
